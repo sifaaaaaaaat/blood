@@ -55,6 +55,12 @@ const client = new Client({
   ssl: { rejectUnauthorized: false },
 });
 
+const stripSqlComments = (text) =>
+  text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*--/.test(line))   // comment-only lines
+    .join("\n");
+
 async function verify() {
   const expectations = [];
   const check = (label, ok) => {
@@ -126,9 +132,9 @@ try {
   if (verifyOnly) {
     await verify();
   } else {
-    const sql = fs.readFileSync(sqlPath, "utf8");
+    const sql = stripSqlComments(fs.readFileSync(sqlPath, "utf8"));
     await client.query(sql);
-    console.log("migration 0001 applied");
+    console.log("migration applied:", path.basename(sqlPath));
     await verify();
   }
 } catch (e) {
