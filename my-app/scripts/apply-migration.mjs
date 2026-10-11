@@ -87,8 +87,9 @@ async function verify() {
   }
 
   // Phase 2 design: 14 policies. Phase 3 adds 1 (notification_consents RLS).
+  // Phase 4 adds 4 (blood_requests x3 + request_transitions x1).
   // Track the exact expected set so a missing/extra policy is caught:
-  const EXPECTED = 14 + 1;
+  const EXPECTED = 14 + 1 + 4;
   const { rows: policies } = await client.query(
     `select count(*)::int as n from pg_policies where schemaname = 'public'`
   );
