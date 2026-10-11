@@ -54,14 +54,16 @@ create table public.districts (
   id          smallint primary key,
   division_id smallint not null references public.divisions (id) on delete restrict,
   name        text not null unique,
-  bn_name     text not null
+  bn_name     text not null,
+  unique (id, division_id)
 );
 
 create table public.upazilas (
   id          integer primary key,
   district_id smallint not null references public.districts (id) on delete restrict,
   name        text not null,
-  bn_name     text not null
+  bn_name     text not null,
+  unique (id, district_id)
 );
 
 -- ---------------------------------------------------------------------------
