@@ -11,7 +11,9 @@ import path from "node:path";
 import { Client } from "pg";
 
 const verifyOnly = process.argv.includes("--verify");
-const sqlPath = path.resolve("supabase/migrations/0001_phase2_foundation.sql");
+const sqlPath = path.resolve(
+  process.env.MIGRATION_FILE || "supabase/migrations/0001_phase2_foundation.sql"
+);
 
 // --- load env from .env.local (no dotenv dependency) ------------------------
 const envText = fs.readFileSync(path.resolve(".env.local"), "utf8");
@@ -34,8 +36,8 @@ if (!password) {
 }
 if (!verifyOnly) {
   const sql = fs.readFileSync(sqlPath, "utf8");
-  if (!sql.includes("admin_bootstrap_grant")) {
-    console.error("migration file looks wrong — aborting");
+  if (!/\bbegin\s*;/i.test(sql) || !/\bcommit\s*;/i.test(sql)) {
+    console.error("migration file must be wrapped in begin/commit — aborting");
     process.exit(1);
   }
 }
