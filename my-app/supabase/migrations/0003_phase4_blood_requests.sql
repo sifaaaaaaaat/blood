@@ -14,17 +14,17 @@
 
 begin;
 
-create type public.request_status as enum (
-  'draft', 'submitted', 'searching', 'awaiting_responses',
-  'connected', 'fulfilled', 'cancelled', 'expired', 'flagged'
-);
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'request_status' and typnamespace = 'public'::regnamespace) then
+    create type public.request_status as enum (
+      'draft', 'submitted', 'searching', 'awaiting_responses',
+      'connected', 'fulfilled', 'cancelled', 'expired', 'flagged'
+    );
+  end if;
+end $$;
 
-create type public.request_urgency_v2 as enum ('routine', 'urgent', 'critical');
-
--- Keep 0001's request_urgency (identical set) — reuse it instead of duplicating.
-drop type public.request_urgency_v2;
-
-create table public.blood_requests (
+create table if not exists public.blood_requests (
   id               uuid primary key default gen_random_uuid(),
   creator_id       uuid not null references public.profiles (id) on delete cascade,
   blood_group      public.blood_group not null,
@@ -48,11 +48,11 @@ create table public.blood_requests (
   unique (creator_id, idempotency_key)
 );
 
-create index blood_requests_status_idx on public.blood_requests (status, required_by);
-create index blood_requests_creator_idx on public.blood_requests (creator_id, created_at desc);
+create index if not exists blood_requests_status_idx on public.blood_requests (status, required_by);
+create index if not exists blood_requests_creator_idx on public.blood_requests (creator_id, created_at desc);
 
 -- Every state change recorded as its own row — full, auditable transition trail.
-create table public.request_transitions (
+create table if not exists public.request_transitions (
   id           bigint generated always as identity primary key,
   request_id   uuid not null references public.blood_requests (id) on delete cascade,
   from_status  public.request_status,
@@ -62,7 +62,8 @@ create table public.request_transitions (
   created_at   timestamptz not null default now()
 );
 
-create index request_transitions_request_idx on public.request_transitions (request_id, created_at);
+create index if not exists request_transitions_request_idx
+  on public.request_transitions (request_id, created_at);
 
 alter table public.blood_requests       enable row level security;
 alter table public.request_transitions  enable row level security;
@@ -71,27 +72,33 @@ alter table public.request_transitions  enable row level security;
 -- blood_requests: any authenticated user can read (needed for matching later);
 -- only the creator may write, and only while the request is still mutable.
 -- --------------------------------------------------------------------------
-create policy blood_requests_select_authenticated on public.blood_requests
-  for select to authenticated using (true);
-
-create policy blood_requests_insert_owner on public.blood_requests
-  for insert to authenticated
-  with check (
-    creator_id = auth.uid()
-    and status in ('draft', 'submitted')
-  );
-
-create policy blood_requests_update_owner_active on public.blood_requests
-  for update to authenticated
-  using (creator_id = auth.uid())
-  with check (
-    creator_id = auth.uid()
-    and status in ('draft', 'submitted', 'searching', 'awaiting_responses')
-  );
-
-create policy blood_requests_delete_owner_draft on public.blood_requests
-  for delete to authenticated
-  using (creator_id = auth.uid() and status = 'draft');
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='blood_requests' and policyname='blood_requests_select_authenticated') then
+    create policy blood_requests_select_authenticated on public.blood_requests
+      for select to authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='blood_requests' and policyname='blood_requests_insert_owner') then
+    create policy blood_requests_insert_owner on public.blood_requests
+      for insert to authenticated
+      with check (creator_id = auth.uid() and status in ('draft', 'submitted'));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='blood_requests' and policyname='blood_requests_update_owner_active') then
+    create policy blood_requests_update_owner_active on public.blood_requests
+      for update to authenticated
+      using (creator_id = auth.uid())
+      with check (creator_id = auth.uid() and status in ('draft', 'submitted', 'searching', 'awaiting_responses'));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='blood_requests' and policyname='blood_requests_delete_owner_draft') then
+    create policy blood_requests_delete_owner_draft on public.blood_requests
+      for delete to authenticated
+      using (creator_id = auth.uid() and status = 'draft');
+  end if;
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='request_transitions' and policyname='request_transitions_select_authenticated') then
+    create policy request_transitions_select_authenticated on public.request_transitions
+      for select to authenticated using (true);
+  end if;
+end $$;
 
 -- ----------
 -- transitions are written by the service using the actor's own identity;
@@ -181,7 +188,14 @@ $$;
 revoke execute on function public.expire_stale_requests() from anon, authenticated;
 
 -- updated_at trigger
-create trigger blood_requests_touch before update on public.blood_requests
-  for each row execute function public.touch_updated_at();
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger where tgname = 'blood_requests_touch' and tgrelid = 'public.blood_requests'::regclass
+  ) then
+    create trigger blood_requests_touch before update on public.blood_requests
+      for each row execute function public.touch_updated_at();
+  end if;
+end $$;
 
 commit;
