@@ -86,12 +86,13 @@ async function verify() {
     check(`RLS enabled on ${r.relname}`, r.relrowsecurity === true);
   }
 
-  // exact designed count: profiles 4, donor_profiles 3, requester_profiles 2,
-  // contact_numbers 1, divisions/districts/upazilas 3, audit_log 1 = 14
+  // Phase 2 design: 14 policies. Phase 3 adds 1 (notification_consents RLS).
+  // Track the exact expected set so a missing/extra policy is caught:
+  const EXPECTED = 14 + 1;
   const { rows: policies } = await client.query(
     `select count(*)::int as n from pg_policies where schemaname = 'public'`
   );
-  check(`RLS policies present (${policies[0].n}/14)`, policies[0].n === 14);
+  check(`RLS policies present (${policies[0].n}/${EXPECTED})`, policies[0].n === EXPECTED);
 
   const { rows: triggers } = await client.query(
     `select count(*)::int as n from information_schema.triggers

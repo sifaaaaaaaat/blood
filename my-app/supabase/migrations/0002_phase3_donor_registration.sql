@@ -25,16 +25,41 @@ alter table public.donor_profiles
 -- Consolidate location: upazila belongs to its district, district to division.
 -- The FK chain to the lookup tables keeps hierarchy relations valid — a donor
 -- cannot pick an upazila from a different district.
-alter table public.donor_profiles
-  drop constraint donor_profiles_upazila_id_fkey;
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.donor_profiles'::regclass
+      and conname  = 'donor_profiles_upazila_id_fkey'
+  ) then
+    alter table public.donor_profiles drop constraint donor_profiles_upazila_id_fkey;
+  end if;
+end $$;
 
-alter table public.donor_profiles
-  add constraint donor_loc_fk_upazila_in_district
-    foreign key (upazila_id, district_id)
-    references public.upazilas (id, district_id) on delete restrict,
-  add constraint donor_loc_fk_district_in_division
-    foreign key (district_id, division_id)
-    references public.districts (id, division_id) on delete restrict;
+-- Guarded adds (idempotent against already-applied runs).
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.donor_profiles'::regclass
+      and conname  = 'donor_loc_fk_upazila_in_district'
+  ) then
+    alter table public.donor_profiles
+      add constraint donor_loc_fk_upazila_in_district
+        foreign key (upazila_id, district_id)
+        references public.upazilas (id, district_id) on delete restrict;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.donor_profiles'::regclass
+      and conname  = 'donor_loc_fk_district_in_division'
+  ) then
+    alter table public.donor_profiles
+      add constraint donor_loc_fk_district_in_division
+        foreign key (district_id, division_id)
+        references public.districts (id, division_id) on delete restrict;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- contact_numbers — verifiable identity data, one row per auth user in 0001.
@@ -55,7 +80,7 @@ create unique index if not exists contact_numbers_verified_phone_uq
   where verified_at is not null;
 
 -- Explicit consent ledger for notification channels (no payments, ever).
-create table public.notification_consents (
+create table if not exists public.notification_consents (
   user_id     uuid not null references public.profiles (id) on delete cascade,
   channel     text not null check (channel in ('in_app', 'sms')),
   consented_at timestamptz not null default now(),
@@ -65,13 +90,32 @@ create table public.notification_consents (
 
 alter table public.notification_consents enable row level security;
 
-create policy notification_consents_owner_all on public.notification_consents
-  for all to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'notification_consents'
+      and policyname = 'notification_consents_owner_all'
+  ) then
+    create policy notification_consents_owner_all on public.notification_consents
+      for all to authenticated
+      using (user_id = auth.uid())
+      with check (user_id = auth.uid());
+  end if;
+end $$;
 
-create trigger notification_consents_touch before update on public.notification_consents
-  for each row execute function public.touch_updated_at();
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgname = 'notification_consents_touch'
+      and tgrelid  = 'public.notification_consents'::regclass
+  ) then
+    create trigger notification_consents_touch before update
+      on public.notification_consents
+      for each row execute function public.touch_updated_at();
+  end if;
+end $$;
 
 grant select, insert on public.notification_consents to authenticated;
 grant update on public.notification_consents to authenticated;
