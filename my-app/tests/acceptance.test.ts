@@ -82,6 +82,8 @@ beforeEach(() => {
   state.insertError = null;
 });
 
+import { NOTIFICATION_CONFIG } from "@/src/lib/config/notifications";
+
 const sha256 = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
 const auth = { id: "donor-1" } as never;
 
@@ -105,15 +107,16 @@ describe("createActionToken", () => {
     expect(state.inserts[0].table).toBe("match_action_tokens");
   });
 
-  it("encodes expiry (30 min) in the stored row and the result", async () => {
+  it("encodes expiry (configurable TTL) in the stored row and the result", async () => {
     const before = Date.now();
     const res = await createActionToken({ matchId: "m-1", action: "accept", donorId: "d-1" });
     if (!res.ok) throw (res as unknown as Error);
     const row = state.inserts[0].row as Record<string, string>;
     const stored = new Date(row.expires_at).getTime();
     const reported = new Date(res.data.expiresAt).getTime();
-    expect((stored - before) / 60000).toBeGreaterThan(28);
-    expect((stored - before) / 60000).toBeLessThanOrEqual(31);
+    const ttlMs = NOTIFICATION_CONFIG.ACTION_TOKEN_TTL_MINUTES * 60_000;
+    expect(stored - before).toBeGreaterThan(ttlMs - 60_000);
+    expect(stored - before).toBeLessThanOrEqual(ttlMs + 60_000);
     expect(reported).toBe(stored);
   });
 

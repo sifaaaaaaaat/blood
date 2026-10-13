@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import type { AuthUser } from "@/src/lib/auth";
+import { NOTIFICATION_CONFIG } from "@/src/lib/config/notifications";
 
 export type Result<T> = { ok: true; data: T } | { ok: false; code: string; message: string };
 const err = (code: string, message: string): Result<never> => ({ ok: false, code, message });
@@ -51,7 +52,7 @@ export async function createActionToken(input: ActionTokenInput): Promise<Result
 
   const raw = crypto.randomBytes(32).toString("base64url");
   const hash = sha256(raw);
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
+  const expiresAt = new Date(Date.now() + NOTIFICATION_CONFIG.ACTION_TOKEN_TTL_MINUTES * 60 * 1000).toISOString();
 
   // The donor is never stored in the token table: ownership is derived from
   // the match row itself at redemption time, so a leaked token cannot be
