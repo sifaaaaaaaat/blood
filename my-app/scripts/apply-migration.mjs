@@ -92,9 +92,9 @@ async function verify() {
     check(`RLS enabled on ${r.relname}`, r.relrowsecurity === true);
   }
 
-  // Phase 2: 14 policies. Phase 3: +1 (notification_consents).
-  // Phase 4: +5 (blood_requests x4 + request_transitions x1).
-  const EXPECTED = 14 + 1 + 5;
+  // Phase 2: 14. Phase 3: +1. Phase 4: +5.
+  // Phase 6: +4 (request_matches x3, contact_reveals x1).
+  const EXPECTED = 14 + 1 + 5 + 4;
   const { rows: policies } = await client.query(
     `select count(*)::int as n from pg_policies where schemaname = 'public'`
   );
