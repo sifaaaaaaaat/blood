@@ -128,7 +128,7 @@ export async function processOutbox(
     const { data: result } = await svc.rpc("complete_outbox_item", {
       p_outbox_id: row.id,
       p_outcome: outcome.accepted ? "accepted" : "failed",
-      p_simulated: outcome.accepted ? outcome.simulated : outcome.simulated,
+      p_simulated: outcome.simulated,
       p_provider_ref: outcome.accepted ? outcome.reference : null,
       p_failure_reason: outcome.accepted ? null : outcome.reason,
       p_backoff_minutes: backoffMinutes,
