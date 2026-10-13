@@ -1,5 +1,6 @@
 import "server-only";
 import { MATCHING_CONFIG } from "@/src/lib/config/matching";
+import { RECOVERY_CONFIG as recoveryCfg } from "@/src/lib/config/recovery";
 import type { AuthUser } from "@/src/lib/auth";
 
 export type Result<T> = { ok: true; data: T } | { ok: false; code: string; message: string };
@@ -106,6 +107,14 @@ export function candidatesQuery(opts: {
        and (dp.paused_until is null or dp.paused_until <= now())
        and dp.notify_consent = true
        and cn.verified_at is not null
+       -- Phase 8: donors under an (unlifted) administrative recovery hold are
+       -- excluded from ordinary matching. Holds persist until the DONOR
+       -- confirms availability after the configured period (expiry does not
+       -- auto-restore matching), so checking lifted=false is correct.
+       and not exists (
+         select 1 from public.donor_recovery_holds hh
+          where hh.donor_id = dp.user_id and hh.lifted = false
+       )
        and (${scopeClause})
        and (
          select count(*) from public.request_transitions rt
@@ -114,6 +123,13 @@ export function candidatesQuery(opts: {
            and rt.to_status = 'connected'
            and rt.created_at >= '${fatigueCutoff}'
        ) < ${MATCHING_CONFIG.FATIGUE_MAX_ENGAGEMENTS}
+       -- Phase 8: repeated-request shielding — built in, on top of the
+       -- connected-engagement cap, so one donor is not flooded with matches.
+       and (
+         select count(*) from public.request_matches rm
+         where rm.donor_id = dp.user_id
+           and rm.created_at >= now() - interval '30 days'
+       ) < ${recoveryCfg.MAX_NEW_MATCHES_PER_DONOR_30D}
      order by p.display_name
      limit ${limit}`;
 }

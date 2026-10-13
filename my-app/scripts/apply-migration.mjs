@@ -94,7 +94,7 @@ async function verify() {
 
   // Phase 2: 14. Phase 3: +1. Phase 4: +5.
   // Phase 6: +4 (request_matches x3, contact_reveals x1).
-  const EXPECTED = 14 + 1 + 5 + 4;
+  const EXPECTED = 14 + 1 + 5 + 4 + 4; // +4: Phase 8 (donation_records ×2, recovery_rules, donor_recovery_holds)
   const { rows: policies } = await client.query(
     `select count(*)::int as n from pg_policies where schemaname = 'public'`
   );
