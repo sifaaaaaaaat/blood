@@ -12,7 +12,10 @@ const err = (code: string, message: string, field?: string): Result<never> => ({
 
 type SupabaseLike = {
   from: (t: string) => PostgrestLike; // narrow client type kept local; see db.ts
-  rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+  rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<{
+    data: unknown;
+    error: { message: string } | null;
+  }>;
 };
 
 type PostgrestLike = {
@@ -64,9 +67,21 @@ export async function createRequest(auth: AuthUser, input: unknown) {
   if (!checkCreateRate(auth.id)) {
     return err("rate_limited", "Too many requests in a short window; try again later");
   }
-
   const v = parsed.data;
   const supabase = await getUserClient();
+
+  // Phase 10: durable, DB-side daily cap (server-verified, audited on trip)
+  // backing the in-memory window with the account-scoped counter.
+  const bump = await supabase.rpc("bump_abuse_counter", {
+    p_subject: auth.id,
+    p_scope: "request_create",
+  });
+  if (bump.error) return err("db_error", bump.error.message);
+  const bumpRow = (Array.isArray(bump.data) ? bump.data[0] : bump.data) as
+    { allowed: boolean } | null;
+  if (!bumpRow?.allowed) {
+    return err("rate_limited", "daily request limit reached; try again tomorrow");
+  }
 
   // Idempotent insert relying on unique (creator_id, idempotency_key).
   // On conflict the existing row wins and we return it (no duplicate).

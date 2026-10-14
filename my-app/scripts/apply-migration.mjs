@@ -74,7 +74,8 @@ async function verify() {
   );
   const names = tables.map((r) => r.table_name);
   for (const t of ["profiles", "donor_profiles", "requester_profiles",
-    "contact_numbers", "divisions", "districts", "upazilas", "audit_log"]) {
+    "contact_numbers", "divisions", "districts", "upazilas", "audit_log",
+    "platform_roles", "abuse_reports", "account_status", "platform_settings", "abuse_counters"]) {
     check(`table ${t} exists`, names.includes(t));
   }
 
@@ -94,7 +95,7 @@ async function verify() {
 
   // Phase 2: 14. Phase 3: +1. Phase 4: +5.
   // Phase 6: +4 (request_matches x3, contact_reveals x1).
-  const EXPECTED = 14 + 1 + 5 + 4 + 4; // +4: Phase 8 (donation_records ×2, recovery_rules, donor_recovery_holds)
+  const EXPECTED = 14 + 1 + 5 + 4 + 4 + 4; // +4: Phase 8 (donations ×2, rules, holds) | Phase 10: platform_roles, account_status, abuse_reports ×2
   const { rows: policies } = await client.query(
     `select count(*)::int as n from pg_policies where schemaname = 'public'`
   );

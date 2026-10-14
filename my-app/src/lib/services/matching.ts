@@ -115,6 +115,12 @@ export function candidatesQuery(opts: {
          select 1 from public.donor_recovery_holds hh
           where hh.donor_id = dp.user_id and hh.lifted = false
        )
+       -- Phase 10: donors whose account is disabled/suspended by moderation
+       -- are out of every candidate listing (DB-checked elsewhere too).
+       and not exists (
+         select 1 from public.account_status st
+          where st.user_id = dp.user_id and st.status <> 'active'
+       )
        and (${scopeClause})
        and (
          select count(*) from public.request_transitions rt
@@ -142,6 +148,19 @@ export async function findCandidates(auth: AuthUser, requestId: string): Promise
   const req = gate.data as { blood_group: string; location_id: number };
 
   const svc = await getService();
+
+  // Phase 10 abuse control: donor-ID enumeration is capped per account per
+  // day (server-side counter; the refusal is audited inside the RPC).
+  const bump = await svc.rpc("bump_abuse_counter", {
+    p_subject: auth.id,
+    p_scope: "candidate_list",
+  });
+  if (bump.error) return err("db_error", bump.error.message);
+  const bumpRow = (Array.isArray(bump.data) ? bump.data[0] : bump.data) as
+    { allowed: boolean } | null;
+  if (!bumpRow?.allowed) {
+    return err("rate_limited", "candidate lookup limit reached for today; try again tomorrow");
+  }
 
   // District for tiers 3/4 via the upazila-scope gateway.
   const { data: dRows, error: dErr } = await svc.rpc("exec_location_sql", {

@@ -15,6 +15,11 @@ export type AuthUser = {
   isDonor: boolean;
   isRequester: boolean;
   isAdmin: boolean;
+  /**
+   * Phase 10: read from the user's OWN platform_roles row (RLS limits the
+   * read to self). Pre-check only — every mutation re-verifies inside the DB.
+   */
+  isModerator: boolean;
 };
 
 export async function getAuthUser(
@@ -33,11 +38,20 @@ export async function getAuthUser(
 
   if (profileErr || !profile) return null;
 
+  // Phase 10: active moderator role from the user's own platform_roles row.
+  // No policy = no row = not a moderator; DB re-verifies on every mutation.
+  const { data: role } = await supabase
+    .from("platform_roles")
+    .select("is_moderator")
+    .eq("user_id", data.user.id)
+    .maybeSingle();
+
   return {
     id: profile.id,
     displayName: profile.display_name,
     isDonor: profile.is_donor,
     isRequester: profile.is_requester,
     isAdmin: profile.is_admin,
+    isModerator: role?.is_moderator === true,
   };
 }
