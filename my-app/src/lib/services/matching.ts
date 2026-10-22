@@ -23,11 +23,23 @@ type RpcResult = { data: unknown; error: { message: string } | null };
 type SupabaseLike = {
   from(t: string): {
     select(cols: string): {
-      eq(c: string, v: unknown): { maybeSingle(): PromiseLike<RpcResult> };
+      eq(c: string, v: unknown): {
+        maybeSingle(): PromiseLike<RpcResult>;
+        order(c: string, o?: { ascending?: boolean }): { limit(n: number): PromiseLike<RpcResult> };
+        limit(n: number): PromiseLike<RpcResult>;
+      };
+      order(c: string, o?: { ascending?: boolean }): { limit(n: number): PromiseLike<RpcResult> };
+      limit(n: number): PromiseLike<RpcResult>;
     };
+    upsert(
+      rows: unknown,
+      opts?: Record<string, unknown>
+    ): PromiseLike<RpcResult>;
   };
   rpc(fn: string, args?: Record<string, unknown>): PromiseLike<RpcResult>;
 };
+
+const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 async function getService(): Promise<SupabaseLike> {
   const { getServiceRoleClient } = await import("@/src/lib/db");
@@ -35,8 +47,10 @@ async function getService(): Promise<SupabaseLike> {
 }
 
 async function getUserClient(): Promise<SupabaseLike> {
-  const { createUserClient } = await import("@/src/lib/db");
-  return (await createUserClient(async () => [])) as unknown as SupabaseLike;
+  // Authed session client (cookies via next/headers) — RLS scopes every read
+  // to the signed-in user. An empty-cookie anon client would see nothing.
+  const { createAuthedClient } = await import("@/src/lib/db");
+  return (await createAuthedClient()) as unknown as SupabaseLike;
 }
 
 export async function assertCanMatch(auth: AuthUser, requestId: string): Promise<Result<unknown>> {
@@ -95,7 +109,7 @@ export function candidatesQuery(opts: {
           ? `u.district_id = ${districtId} and dp.upazila_id <> ${upazilaId}`
           : `u.district_id in (select neighbor_id from public.district_adjacency where district_id = ${districtId})`;
 
-  return `
+  const sql = `
     select ${baseCols}, ${tierVal} as tier
       from public.donor_profiles dp
       join public.profiles p    on p.id = dp.user_id
@@ -138,6 +152,10 @@ export function candidatesQuery(opts: {
        ) < ${recoveryCfg.MAX_NEW_MATCHES_PER_DONOR_30D}
      order by p.display_name
      limit ${limit}`;
+  // The RPC's Postgres trim() strips SPACES only — a leading newline leaves
+  // " select" after whitespace collapsing and trips its ^select guard.
+  // Hand it a string whose FIRST character is 's'.
+  return sql.trimStart();
 }
 
 export const PAGE = MATCHING_CONFIG.PAGE_SIZE;
@@ -162,9 +180,11 @@ export async function findCandidates(auth: AuthUser, requestId: string): Promise
     return err("rate_limited", "candidate lookup limit reached for today; try again tomorrow");
   }
 
-  // District for tiers 3/4 via the upazila-scope gateway.
+  // District for tiers 3/4 via the upazila-scope gateway. The RPC declares
+  // RETURNS TABLE(district_id, name) — the query must return BOTH columns
+  // or Postgres rejects the structure mismatch.
   const { data: dRows, error: dErr } = await svc.rpc("exec_location_sql", {
-    q: `select district_id from public.upazilas where id = ${req.location_id}`,
+    q: `select district_id, name from public.upazilas where id = ${req.location_id}`,
   });
   if (dErr) return err("db_error", dErr.message);
   const districtId = (dRows as { district_id: number }[] | null)?.[0]?.district_id;
@@ -209,6 +229,124 @@ export async function findCandidates(auth: AuthUser, requestId: string): Promise
     .slice(0, PAGE);
 
   return { ok: true, data: out };
+}
+
+/**
+ * Phase 11E — requester-side match creation. Runs the live candidate pool
+ * and upserts service-role `pending` matches tagged as the matching engine.
+ * Idempotent per (request_id, donor_id): reruns never duplicate rows.
+ */
+export async function createMatchesFromCandidates(
+  auth: AuthUser,
+  requestId: string
+): Promise<Result<{ created: number; total: number }>> {
+  if (!UUID_RE.test(requestId)) return err("validation_error", "invalid request id");
+
+  const pool = await findCandidates(auth, requestId);
+  if (!pool.ok) return pool;
+  const svc = await getService();
+
+  let created = 0;
+  for (const c of pool.data) {
+    // expires_at left to the table default (now() + 24h) — no invented TTL.
+    const row = {
+      request_id: requestId,
+      donor_id: c.donor_user_id,
+      status: "pending" as const,
+      created_by: "matching_engine" as const,
+    };
+    const { error } = await svc
+      .from("request_matches")
+      .upsert(row, { onConflict: "request_id,donor_id", ignoreDuplicates: true });
+    if (error) return err("db_error", error.message);
+    created += 1;
+  }
+  return { ok: true, data: { created, total: pool.data.length } };
+}
+
+/** Requester view of a request's matches: anonymized donor identity only. */
+export type RequesterMatchRow = {
+  id: string;
+  donor_id: string;
+  status: string;
+  expires_at: string | null;
+  created_at: string;
+  donor?: { display_name: string } | null;
+};
+
+/** Owner/admin list of the matches created for one request (id-guarded). */
+export async function listRequestMatches(
+  auth: AuthUser,
+  requestId: string
+): Promise<Result<RequesterMatchRow[]>> {
+  if (!UUID_RE.test(requestId)) return err("validation_error", "invalid request id");
+  const gate = await assertCanMatch(auth, requestId);
+  if (!gate.ok) return gate;
+  const client = await getUserClient();
+  const { data, error } = await client
+    .from("request_matches")
+    .select("id, donor_id, status, expires_at, created_at, donor:profiles(display_name)")
+    .eq("request_id", requestId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) return err("db_error", error.message);
+  return { ok: true, data: (data ?? []) as RequesterMatchRow[] };
+}
+
+/** Shape the donor sees: request summary embedded, NO contact fields. */
+export type DonorMatchRow = {
+  id: string;
+  status: string;
+  expires_at: string | null;
+  created_at: string;
+  request?: {
+    id: string;
+    blood_group: string;
+    hospital_name: string;
+    location_text: string | null;
+    urgency: string;
+    units_needed: number;
+    required_by: string;
+    status: string;
+  } | null;
+};
+
+/** Donor view of their own matches: pass-through of the session client's
+ * rows — the service never ADDS contact fields of its own. The session
+ * client (cookies via next/headers) keeps RLS scoping to the donor. */
+export async function listOwnMatches(auth: AuthUser): Promise<Result<DonorMatchRow[]>> {
+  void auth;
+  const client = await (async () => {
+    const { createAuthedClient } = await import("@/src/lib/db");
+    return (await createAuthedClient()) as unknown as SupabaseLike;
+  })();
+  const { data, error } = await client
+    .from("request_matches")
+    .select(
+      "id, status, expires_at, created_at, " +
+        "request:blood_requests(id, blood_group, location_text, urgency, units_needed, required_by, status)"
+    )
+    .eq("donor_id", auth.id)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) return err("db_error", error.message);
+  // blood_requests stores the pickup label in location_text (no hospital_name
+  // column); map it so consumers always get a hospital_name display field.
+  type RawRow = Record<string, unknown>;
+  const rows = ((data ?? []) as unknown as RawRow[]).map((m): DonorMatchRow => {
+    const rawReq = (m["request"] ?? null) as RawRow | null;
+    const request = rawReq
+      ? { ...rawReq, hospital_name: String(rawReq["location_text"] ?? "Unnamed location") } as unknown as DonorMatchRow["request"]
+      : null;
+    return {
+      id: String(m["id"]),
+      status: String(m["status"]),
+      expires_at: (m["expires_at"] as string | null) ?? null,
+      created_at: String(m["created_at"]),
+      request,
+    };
+  });
+  return { ok: true, data: rows };
 }
 
 export const __internals = { candidatesQuery, PAGE };

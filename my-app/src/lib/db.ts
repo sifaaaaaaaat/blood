@@ -1,5 +1,6 @@
 import { createServerClient, parseCookieHeader } from "@supabase/ssr";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
 import "server-only";
 
 /**
@@ -50,6 +51,36 @@ export async function createUserClient(
         setAll: () => {
           // Route handlers can write cookies via Next's response; Phase 3 wires
           // this properly when auth flows land.
+        },
+      },
+    }
+  );
+}
+
+/**
+ * Authed per-request client (Phase 3/11D auth flows). Reads the session
+ * cookies through next/headers and WRITES BACK refreshed session cookies
+ * (needed by the PKCE code exchange in /api/auth/callback and by sign-in).
+ */
+export async function createAuthedClient(): Promise<SupabaseClient> {
+  const cookieStore = await cookies();
+  return createServerClient(
+    requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options);
+            }
+          } catch {
+            // Server Components can't mutate cookies; the middleware-refresh
+            // pattern covers that case. Route handlers (all auth flows) can.
+          }
         },
       },
     }

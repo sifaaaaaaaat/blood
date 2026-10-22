@@ -16,8 +16,10 @@ type TableRef = {
 type SupabaseLike = { from(t: string): TableRef };
 
 async function getUserClient(): Promise<SupabaseLike> {
-  const { createUserClient } = await import("@/src/lib/db");
-  return (await createUserClient(async () => [])) as unknown as SupabaseLike;
+  // Session-scoped client bound to the caller's cookies via next/headers
+  // (route handlers; RLS enforces requester/admin visibility of matches).
+  const { createAuthedClient } = await import("@/src/lib/db");
+  return (await createAuthedClient()) as unknown as SupabaseLike;
 }
 
 type MatchRow = { id: string; donor_id: string };

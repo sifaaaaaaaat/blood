@@ -22,10 +22,11 @@ export const ALLOWED_TRANSITIONS: Partial<Record<RequestStatus, RequestStatus[]>
 export const bloodRequestCreateSchema = z
   .object({
     blood_group: z.enum(["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]),
-    // hospital/pickup label; upazila_id refs the lookup table server-side
+    // hospital/pickup label; stored in location_text alongside the lookup id
+    // (the blood_requests table has no separate hospital_name column).
     hospital_name: z.string().trim().min(2).max(120),
     location: z.object({
-      upazila_id: z.number().int().min(1).max(99999),
+      upazila_id: z.number().int().min(1).max(999999),
     }),
     location_text: z.string().trim().max(240).optional(),
     urgency: requestUrgencySchema.default("routine"),
@@ -47,8 +48,10 @@ export type BloodRequestCreateInput = z.infer<typeof bloodRequestCreateSchema>;
 
 export const bloodRequestUpdateSchema = z
   .object({
+    // legacy label kept for clients; stored in location_text (no dedicated
+    // column in the blood_requests table).
     hospital_name: z.string().trim().min(2).max(120).optional(),
-    location: z.object({ upazila_id: z.number().int().min(1).max(99999) }).optional(),
+    location: z.object({ upazila_id: z.number().int().min(1).max(999999) }).optional(),
     location_text: z.string().trim().max(240).optional(),
     urgency: requestUrgencySchema.optional(),
     units_needed: z.number().int().min(1).max(20).optional(),
@@ -60,7 +63,8 @@ export const bloodRequestUpdateSchema = z
 
 export type BloodRequestUpdateInput = z.infer<typeof bloodRequestUpdateSchema>;
 
-/** What a non-owner sees — no contact info, no notes maybe containing PII. */
+/** What a non-owner sees — no contact info, no notes maybe containing PII.
+ *  hospital_name surfaces the stored location label (location_text). */
 export const publicRequestItemSchema = z.object({
   id: z.string().uuid(),
   creator_id: z.string().uuid(),

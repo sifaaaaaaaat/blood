@@ -37,8 +37,10 @@ type PostgrestThenable = (
 ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 
 async function getUserClient(): Promise<SupabaseLike> {
-  const { createUserClient } = await import("@/src/lib/db");
-  return (await createUserClient(async () => [])) as unknown as SupabaseLike;
+  // Session-scoped client bound to the caller's cookies via next/headers
+  // (route handlers + server components; RLS enforced).
+  const { createAuthedClient } = await import("@/src/lib/db");
+  return (await createAuthedClient()) as unknown as SupabaseLike;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,11 @@ export function checkCreateRate(user_id: string): boolean {
   return true;
 }
 
-export async function createRequest(auth: AuthUser, input: unknown) {
+export async function createRequest(
+  auth: AuthUser,
+  input: unknown,
+  opts?: { asDraft?: boolean }
+) {
   const parsed = bloodRequestCreateSchema.safeParse(input);
   if (!parsed.success) {
     const i = parsed.error.issues[0];
@@ -84,6 +90,17 @@ export async function createRequest(auth: AuthUser, input: unknown) {
   }
 
   // Idempotent insert relying on unique (creator_id, idempotency_key).
+  // Replay probe: an existing row for this (creator, key) is returned as
+  // existing:true WITHOUT a second write (the ON CONFLICT path below would
+  // otherwise re-update the row and report it indistinguishably as new).
+  const { data: replayed } = await supabase
+    .from("blood_requests")
+    .select("id, status")
+    .eq("creator_id", auth.id)
+    .eq("idempotency_key", v.idempotency_key)
+    .single();
+  if (replayed) return { ok: true as const, data: replayed, existing: true };
+
   // On conflict the existing row wins and we return it (no duplicate).
   const { data, error } = await supabase
     .from("blood_requests")
@@ -99,7 +116,7 @@ export async function createRequest(auth: AuthUser, input: unknown) {
         request_notes: v.request_notes ?? null,
         consent_confirmed: true,
         contact_pref: v.contact_pref,
-        status: "submitted" as RequestStatus,
+        status: (opts?.asDraft ? "draft" : "submitted") as RequestStatus,
         idempotency_key: v.idempotency_key,
       },
       { onConflict: "creator_id, idempotency_key", ignoreDuplicates: false }
@@ -122,9 +139,12 @@ export async function createRequest(auth: AuthUser, input: unknown) {
   }
 
   // record the initial transition draft→submitted for audit history
+  // (a draft creation is not a submission — nothing to record yet)
   const created = data as { id: string };
-  const svc = await getService();
-  await svc.rpc("record_transition", { p_request_id: created.id, p_from: "draft", p_to: "submitted", p_reason: "created" });
+  if (!opts?.asDraft) {
+    const svc = await getService();
+    await svc.rpc("record_transition", { p_request_id: created.id, p_from: "draft", p_to: "submitted", p_reason: "created" });
+  }
 
   return { ok: true as const, data, existing: false };
 }
@@ -220,6 +240,37 @@ export async function transitionRequest(
   if (histErr) return err("audit_error", histErr.message);
 
   return { ok: true as const, data: { id: requestId, from, to } };
+}
+
+/** Status-history listing for a request. ID is validated before any SQL;
+ * ownership is enforced (users: forbidden masks existence; admins: not_found). */
+export async function listRequestTransitions(
+  auth: AuthUser,
+  requestId: string
+): Promise<Result<unknown[]>> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+    return err("validation_error", "invalid request id");
+  }
+  const supabase = await getUserClient();
+  const { data, error } = await supabase
+    .from("blood_requests")
+    .select("id, creator_id")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error) return err("db_error", error.message);
+  const row = (data ?? null) as { id: string; creator_id: string } | null;
+  if (!row) return err(auth.isAdmin ? "not_found" : "forbidden", "request not found");
+  if (row.creator_id !== auth.id && !auth.isAdmin) {
+    return err("forbidden", "not your request");
+  }
+  const { data: rows, error: histErr } = await supabase
+    .from("request_transitions")
+    .select("id, from_status, to_status, reason, actor_id, created_at")
+    .eq("request_id", requestId)
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (histErr) return err("db_error", histErr.message);
+  return { ok: true, data: (rows ?? []) as unknown[] };
 }
 
 export function isTerminal(s: RequestStatus): boolean {

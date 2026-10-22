@@ -29,7 +29,7 @@ export const availabilitySchema = z.enum(["available", "paused"]);
 export const upazilaRefSchema = z.object({
   division_id: z.number().int().min(1).max(99),
   district_id: z.number().int().min(1).max(999),
-  upazila_id:  z.number().int().min(1).max(99999),
+  upazila_id:  z.number().int().min(1).max(999999),
 });
 
 export const donorRegistrationSchema = z
@@ -73,10 +73,11 @@ export const donorUpdateSchema = z
       .string()
       .date()
       .refine((d) => new Date(d) <= new Date(), "cannot be in the future")
+      .nullable()
       .optional(),
     notify_consent: z.boolean().optional(),
     notify_channel: z.enum(["in_app", "sms", "none"]).optional(),
-    paused_until: z.string().date().optional(),
+    paused_until: z.string().date().nullable().optional(),
   })
   .strict()
   .refine(
@@ -101,6 +102,8 @@ export const donorProfileResponseSchema = z.object({
   notify_consent: z.boolean(),
   notify_channel: z.enum(["in_app", "sms", "none"]),
   is_phone_verified: z.boolean(),
+  /** Owner-only: merged from contact_numbers; null until a contact row exists. */
+  phone: z.string().nullable(),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 });
@@ -109,7 +112,13 @@ export type DonorProfileResponse = z.infer<typeof donorProfileResponseSchema>;
 
 /** STRICTEST test-relevant invariant: phone never leaves the owner's row. */
 export const publicDonorSearchItemSchema = donorProfileResponseSchema
-  .omit({ last_donation_date: true, notify_consent: true, notify_channel: true, is_phone_verified: true })
+  .omit({
+    last_donation_date: true,
+    notify_consent: true,
+    notify_channel: true,
+    is_phone_verified: true,
+    phone: true,
+  })
   .extend({ user_id: z.string().uuid() });
 
 export type PublicDonorSearchItem = z.infer<typeof publicDonorSearchItemSchema>;

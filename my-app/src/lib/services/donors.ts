@@ -53,7 +53,8 @@ export async function registerDonor(
 
   const { error: contactErr } = await supabase.from("contact_numbers").upsert({
     user_id: auth.id,
-    phone: v.phone,
+    // DB check constraint requires E.164 (+8801XXXXXXXXX) in `phone`.
+    phone: phoneNormalized,
     phone_normalized: phoneNormalized,
     // verified_at intentionally NOT set here: OTP confirmation is a distinct,
     // server-side step. Registering never marks a phone verified.
@@ -72,9 +73,10 @@ export async function registerDonor(
 }
 
 async function getUserClient() {
-  // wired to request-scoped cookies by route handler; see db.ts
-  const { createUserClient } = await import("@/src/lib/db");
-  return createUserClient(async () => []);
+  // Session-scoped client bound to the caller's cookies via next/headers
+  // (works in route handlers and server components; RLS enforced).
+  const { createAuthedClient } = await import("@/src/lib/db");
+  return createAuthedClient();
 }
 
 export async function getOwnDonorProfile(auth: AuthUser): Promise<Result<DonorProfileResponse>> {
@@ -94,19 +96,33 @@ export async function getOwnDonorProfile(auth: AuthUser): Promise<Result<DonorPr
 
   if (error || !data) return err("not_found", error?.message ?? "donor profile missing");
 
+  // Owner-only contact merge: the caller's OWN contact row (RLS-limited),
+  // joined here so the owner sees their phone; nobody else's shape ever
+  // carries it. Verification stays honest: verified_at is the only source.
+  const { data: contact } = await supabase
+    .from("contact_numbers")
+    .select("phone, verified_at")
+    .eq("user_id", auth.id)
+    .maybeSingle();
+  const contactRow = (contact ?? null) as { phone?: string; verified_at?: string | null } | null;
+
   return {
     ok: true,
-    data: donorProfileResponseShim(data),
+    data: donorProfileResponseShim(data as Record<string, unknown>, contactRow),
   };
 }
 
 // Minimal adapter: maps the joined row into the response shape; keeps the
 // service layer independent of Supabase's exact join output.
-function donorProfileResponseShim(row: Record<string, unknown>): DonorProfileResponse {
+function donorProfileResponseShim(
+  row: Record<string, unknown>,
+  contact: { phone?: string; verified_at?: string | null } | null
+): DonorProfileResponse {
   const profile = row.display_name as { display_name?: string } | string;
   void FORBIDDEN_COLUMNS; // guard reminder: these columns stay out of responses
   return {
-    display_name: typeof profile === "string" ? profile : "unknown",
+    display_name:
+      typeof profile === "string" ? profile : ((profile as { display_name?: string })?.display_name ?? "unknown"),
     blood_group: row.blood_group as DonorProfileResponse["blood_group"],
     birth_year: row.birth_year as number,
     division_id: (row.division_id as number | null) ?? null,
@@ -117,7 +133,8 @@ function donorProfileResponseShim(row: Record<string, unknown>): DonorProfileRes
     last_donation_date: (row.last_donation_date as string | null) ?? null,
     notify_consent: row.notify_consent as boolean,
     notify_channel: row.notify_channel as DonorProfileResponse["notify_channel"],
-    is_phone_verified: row.is_phone_verified as boolean,
+    is_phone_verified: contact?.verified_at != null,
+    phone: (contact?.phone as string | undefined) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
   };
@@ -162,7 +179,7 @@ export async function updateDonor(
   if (v.phone) {
     const { error } = await supabase.from("contact_numbers").upsert({
       user_id: auth.id,
-      phone: v.phone,
+      phone: normalizeBdMobile(v.phone),
       phone_normalized: normalizeBdMobile(v.phone),
       // verified_at untouched: see registerDonor comment
     });

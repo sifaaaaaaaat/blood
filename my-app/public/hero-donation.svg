@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 560" role="img" aria-labelledby="heroArtTitle">
+  <title id="heroArtTitle">Illustration: a blood donation bag connected by translucent tubing, resting on a red web-pattern background — voluntary blood donation campaign artwork</title>
+  <defs>
+    <!-- web pattern -->
+    <pattern id="webs" width="72" height="72" patternUnits="userSpaceOnUse">
+      <g fill="none" stroke="#C8102E" stroke-opacity="0.16" stroke-width="1.6">
+        <circle cx="36" cy="36" r="8"/>
+        <circle cx="36" cy="36" r="19"/>
+        <circle cx="36" cy="36" r="30"/>
+        <path d="M36 6v60M6 36h60M15 15l42 42M57 15L15 57"/>
+      </g>
+      <circle cx="36" cy="36" r="4.5" fill="#C8102E" fill-opacity="0.28"/>
+    </pattern>
+    <linearGradient id="bagRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E23A54"/>
+      <stop offset="0.55" stop-color="#C8102E"/>
+      <stop offset="1" stop-color="#8E0D22"/>
+    </linearGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6CDD5" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#2468B4" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="glove" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2468B4"/>
+      <stop offset="1" stop-color="#991B2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- backdrop arch + web texture -->
+  <path d="M40 560V220C40 106 133 20 260 20s220 86 220 200v340Z" fill="url(#webs)" stroke="#E8E7E3" stroke-width="2"/>
+
+  <!-- tubing: from top-right curves into the bag -->
+  <path d="M470 96c-16 60-64 74-118 84-88 17-97 74-96 122" fill="none" stroke="url(#tube)" stroke-width="18" stroke-linecap="round"/>
+  <path d="M470 96c-16 60-64 74-118 84-88 17-97 74-96 122" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="5" stroke-dasharray="2 10" stroke-linecap="round"/>
+
+  <!-- blood bag -->
+  <g>
+    <rect x="176" y="300" width="172" height="216" rx="26" fill="url(#bagRed)" stroke="#7F1824" stroke-width="3"/>
+    <rect x="198" y="326" width="60" height="88" rx="14" fill="#ffffff" fill-opacity="0.92"/>
+    <rect x="208" y="338" width="40" height="10" rx="5" fill="#E8E7E3"/>
+    <rect x="208" y="356" width="40" height="10" rx="5" fill="#E8E7E3"/>
+    <rect x="208" y="374" width="28" height="10" rx="5" fill="#E8E7E3"/>
+    <!-- fill level -->
+    <path d="M186 396h152v94a26 26 0 0 1-26 26H212a26 26 0 0 1-26-26Z" fill="#8E0D22" fill-opacity="0.35"/>
+    <!-- port + label band -->
+    <rect x="248" y="286" width="28" height="20" rx="6" fill="#991B2B"/>
+    <text x="262" y="480" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="800" font-size="30" fill="#ffffff" letter-spacing="2">O−</text>
+    <!-- droplet charm -->
+    <path d="M330 268c10 14 16 24 16 33a16 16 0 1 1-32 0c0-9 6-19 16-33Z" fill="#2468B4"/>
+  </g>
+
+  <!-- superhero glove hand (red/blue web glove) holding the tube -->
+  <g transform="translate(356 24) rotate(8)">
+    <path d="M30 118 12 74c-4-10 4-20 15-18l30 6 6-46c1-9 9-15 18-14 8 1 14 8 14 16l-3 52 22-14c8-6 19 0 19 9 0 3-1 6-3 9l-38 44c-14 16-36 22-56 14Z" fill="url(#glove)"/>
+    <g stroke="#F6CDD5" stroke-opacity="0.7" stroke-width="2" fill="none">
+      <path d="M20 96c22 10 46 10 66-2"/>
+      <path d="M28 78c20 8 40 8 58-2"/>
+      <path d="M50 60c10 4 20 4 30-1"/>
+    </g>
+    <path d="M84 8l18-6 6 18-18 7z" fill="#C8102E" fill-opacity="0.85"/>
+    <circle cx="34" cy="108" r="7" fill="#FAFAF8" fill-opacity="0.35"/>
+  </g>
+
+  <!-- small heartbeat line -->
+  <path d="M60 120h34l8-18 12 40 10-22h30" fill="none" stroke="#2468B4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
