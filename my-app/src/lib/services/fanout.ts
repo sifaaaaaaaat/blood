@@ -68,7 +68,9 @@ export async function fanOutMatchesForRequest(
       recipientId: m.donor_id,
       messageType: "match_action",
       idempotencyKey: `match_action:${m.id}:accept`,
-      provider: "mock",
+      // provider defaults to NOTIFICATION_CONFIG.PROVIDER — never hardcode one
+      // here, or rows would carry the wrong provider label when the real
+      // whatsappWeb bridge is active.
     });
     if (!res.ok) return err(res.code, res.message);
     if (res.data.created) enqueued++; else alreadyQueued++;

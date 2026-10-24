@@ -30,6 +30,12 @@ yarn-error.log*
 *.pem
 Thumbs.db
 
+# WhatsApp bridge (whatsapp-bot): session & cache hold the paired account's
+# keys — NEVER commit them.
+whatsapp-bot/.wwebjs_auth/
+whatsapp-bot/.wwebjs_cache/
+whatsapp-bot/inst*.txt
+
 # Framework metadata
 .vercel
 .turbo

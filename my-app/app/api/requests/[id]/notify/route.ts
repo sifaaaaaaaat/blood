@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/src/lib/auth";
 import { fanOutMatchesForRequest } from "@/src/lib/services/fanout";
+import { processOutbox } from "@/src/lib/services/notifications";
 import { parseCookieHeader } from "@supabase/ssr";
 
 export const runtime = "nodejs";
@@ -18,9 +19,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
   const { id } = await ctx.params;
   const result = await fanOutMatchesForRequest(auth, id);
-  const status =
-    result.ok ? 200 :
-    result.code === "not_found" ? 404 :
-    result.code === "forbidden" ? 403 : 500;
-  return NextResponse.json(result, { status });
+  if (!result.ok) {
+    const status =
+      result.code === "not_found" ? 404 :
+      result.code === "forbidden" ? 403 : 500;
+    return NextResponse.json(result, { status });
+  }
+  // No external scheduler exists: sweep the outbox in-request so enqueued
+  // notifications are actually claimed and sent immediately.
+  const sweep = await processOutbox();
+  return NextResponse.json(
+    { ok: true, data: { ...result.data, processed: sweep.ok ? sweep.data : null } },
+    { status: 200 }
+  );
 }

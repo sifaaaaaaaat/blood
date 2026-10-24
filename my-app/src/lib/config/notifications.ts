@@ -14,9 +14,12 @@
 export const NOTIFICATION_CONFIG = {
   /**
    * Active provider. "mock" records simulated attempts only and NEVER marks
-   * anything delivered. Pinned until WhatsApp eligibility is confirmed.
+   * anything delivered. When WHATSAPP_BOT_URL / WHATSAPP_BOT_TOKEN are set,
+   * "whatsappWeb" sends via the local whatsapp-web.js bridge instead.
    */
-  PROVIDER: "mock" as const,
+  PROVIDER: (process.env.WHATSAPP_BOT_URL && process.env.WHATSAPP_BOT_TOKEN
+    ? "whatsappWeb"
+    : "mock") as "whatsappWeb" | "mock",
 
   /** Simulated attempts carry this marker in every completed outbox row. */
   SIMULATED_MARKER: "simulated_sent" as const,

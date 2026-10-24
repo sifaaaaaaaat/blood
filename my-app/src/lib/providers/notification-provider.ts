@@ -4,16 +4,19 @@
  * Server-only. All credentials for any future real provider MUST live in
  * server-side env vars — never in client code, logs, or URLs.
  *
- * The WhatsApp Business integration is deliberately NOT implemented: Meta's
- * current policy restricts "body parts or fluids" and its violations examples
- * name blood-donation centers, with no clear humanitarian exception published.
- * Until Meta or an authorized provider confirms this exact use case in a
- * use-case assessment, PROVIDER stays pinned to "mock" in
- * src/lib/config/notifications.ts. The seam below is ready for another
- * provider (e.g. transactional SMS) once the owner picks an alternative.
+ * Active provider resolution:
+ *  · "mock" (default): records simulated attempts, delivers nothing.
+ *  · "whatsappWeb": set automatically when WHATSAPP_BOT_URL + WHATSAPP_BOT_TOKEN
+ *    are both present (see src/lib/config/notifications.ts). Sends through the
+ *    free local whatsapp-web.js bridge — note Meta has no published humanitarian
+ *    exception for blood-donation content, so the owner accepts the risk that
+ *    WhatsApp may restrict the paired number. Pair a dedicated number, never a
+ *    personal one.
  */
 import "server-only";
 import crypto from "node:crypto";
+import { NOTIFICATION_CONFIG } from "@/src/lib/config/notifications";
+import { whatsappWebProvider } from "@/src/lib/providers/whatsapp-web";
 
 export type OutboundMessage = {
   outboxId: string;
@@ -55,8 +58,9 @@ export const mockProvider: NotificationProvider = {
 };
 
 export function getProvider(): NotificationProvider {
-  // Only the mock provider exists until the WhatsApp/alternative decision is
-  // made by the owner. Unknown names fall back to mock — never to a real
-  // network call by accident.
+  // "whatsappWeb" is active only when BOTH env vars are set (gated in
+  // config/notifications.ts). Anything unknown falls back to mock — never to
+  // a real network call by accident.
+  if (NOTIFICATION_CONFIG.PROVIDER === "whatsappWeb") return whatsappWebProvider;
   return mockProvider;
 }
