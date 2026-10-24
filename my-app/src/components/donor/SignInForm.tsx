@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { Alert } from "@/src/components/ui/primitives";
 import { SocialButton } from "./SocialButton";
 import { useRouter } from "next/navigation";
@@ -34,6 +35,7 @@ export function SignInForm({
     socialGoogle: string;
     socialFacebook: string;
     socialApple: string;
+    forgotPasswordLink: string;
   };
   next: string;
   callbackError: string | null;
@@ -154,6 +156,12 @@ export function SignInForm({
       >
         {sending ? labels.signingIn : labels.signIn}
       </button>
+      <Link
+        href="/forgot"
+        className="justify-self-center text-sm text-ink-600 underline underline-offset-2 hover:text-ink-900"
+      >
+        {labels.forgotPasswordLink}
+      </Link>
       <div className="flex items-center gap-3 pt-1" aria-hidden>
         <span className="h-px flex-1 bg-ink-200" />
         <span className="text-xs font-medium uppercase tracking-wide text-ink-400">

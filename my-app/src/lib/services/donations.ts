@@ -17,8 +17,11 @@ type ResponseLike = {
 };
 
 async function getUserClient(): Promise<ResponseLike> {
-  const { createUserClient } = await import("@/src/lib/db");
-  return (await createUserClient(async () => [])) as unknown as ResponseLike;
+  // Session-bearing client (cookies via next/headers) — RLS enforces donor
+  // ownership of donation rows. An empty-cookie client would degrade to the
+  // anon role and hit "permission denied"; never capture cookies here.
+  const { createAuthedClient } = await import("@/src/lib/db");
+  return (await createAuthedClient()) as unknown as ResponseLike;
 }
 async function getService(): Promise<ResponseLike> {
   const { getServiceRoleClient } = await import("@/src/lib/db");

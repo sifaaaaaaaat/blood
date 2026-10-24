@@ -31,6 +31,7 @@ vi.mock("@/src/lib/db", () => {
   return {
     getServiceRoleClient: client,
     createUserClient: async () => client(),
+    createAuthedClient: async () => client(),
   };
 });
 
