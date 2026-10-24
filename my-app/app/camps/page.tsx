@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getDictionary } from "@/src/lib/i18n/server";
-import { listUpcomingCamps, type CampCard } from "@/src/lib/services/camps";
+import { listUpcomingCampsCached } from "@/src/lib/services/cached-reads";
+import type { CampCard } from "@/src/lib/services/camps";
 import { Badge, Card, EmptyState, SectionHeading } from "@/src/components/ui/primitives";
 import { ScrollReveal } from "@/src/components/motion/ScrollReveal";
 
@@ -28,7 +29,7 @@ export default async function CampsPage() {
 
   // Only real, published, admin-vetted camps — an honest empty state when
   // none exist yet (nothing is ever synthesized here).
-  const result = await listUpcomingCamps();
+  const result = await listUpcomingCampsCached();
   const camps = (result.ok ? result.data : []) as CampCard[];
   const { upcoming, past } = partitionByNow(camps);
 

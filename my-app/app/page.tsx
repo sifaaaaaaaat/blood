@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getDictionary } from "@/src/lib/i18n/server";
 import { getServerSession } from "@/src/lib/session";
-import { getPlatformStats } from "@/src/lib/services/stats";
-import { getPublishedBankCount } from "@/src/lib/services/bloodbanks";
-import { listUpcomingCamps } from "@/src/lib/services/camps";
-import { listPublishedBanks } from "@/src/lib/services/bloodbanks";
-import { listDivisions, type LocationOption } from "@/src/lib/services/locations";
+import { getPlatformStatsCached } from "@/src/lib/services/cached-reads";
+import { getPublishedBankCountCached } from "@/src/lib/services/cached-reads";
+import { listUpcomingCampsCached } from "@/src/lib/services/cached-reads";
+import { listPublishedBanksCached } from "@/src/lib/services/cached-reads";
+import { listDivisionsCached } from "@/src/lib/services/cached-reads";
+import type { LocationOption } from "@/src/lib/services/locations";
 import { HomeHero } from "@/src/components/home/HomeHero";
 import { HeroCampaignCard } from "@/src/components/home/HeroCampaignCard";
 import { HomeEcosystemCards } from "@/src/components/home/HomeEcosystemCards";
@@ -62,11 +63,11 @@ export default async function Home({
   const prefill = readPrefill(params);
 
   const [stats, camps, banks, divisions, banksTotal] = await Promise.all([
-    getPlatformStats(),
-    listUpcomingCamps(3),
-    listPublishedBanks({ limit: 4, offset: 0 }),
-    listDivisions(),
-    getPublishedBankCount(),
+    getPlatformStatsCached(),
+    listUpcomingCampsCached(3),
+    listPublishedBanksCached({ limit: 4, offset: 0 }),
+    listDivisionsCached(),
+    getPublishedBankCountCached(),
   ]);
 
   const signedIn = Boolean(session);
