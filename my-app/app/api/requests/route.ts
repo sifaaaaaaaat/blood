@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/src/lib/auth";
 import { createRequest, listOwnRequests } from "@/src/lib/services/requests";
+import { createMatchesFromCandidates } from "@/src/lib/services/matching";
+import { fanOutMatchesForRequest } from "@/src/lib/services/fanout";
+import { processOutbox } from "@/src/lib/services/notifications";
 import { parseCookieHeader } from "@supabase/ssr";
 
 export const runtime = "nodejs";
@@ -27,7 +30,44 @@ export async function POST(req: NextRequest) {
       result.code === "rate_limited" ? 429 : 500;
     return NextResponse.json(result, { status });
   }
-  return NextResponse.json(result, { status: (result as { existing?: boolean }).existing ? 200 : 201 });
+
+  // -----------------------------------------------------------------------
+  // Automatic outreach (Phase 12 fix): the request alone used to sit there
+  // until the requester noticed the separate "Find & notify donors" button,
+  // so nothing was ever sent. Now the submitted request immediately runs the
+  // matching engine, fans out notifications to every pending match and
+  // sweeps the outbox in-request — same server-authoritative, idempotent
+  // steps the manual trigger uses. Every step is idempotent, so this also
+  // heals requests whose earlier outreach failed. An outreach glitch
+  // NEVER fails the request itself — the manual button remains the fallback.
+  // -----------------------------------------------------------------------
+  let outreach: unknown = null;
+  const requestId = (result.data as { id?: string }).id;
+  if (typeof requestId === "string" && requestId) {
+    try {
+      const matched = await createMatchesFromCandidates(auth, requestId);
+      if (matched.ok) {
+        const fanned = await fanOutMatchesForRequest(auth, requestId);
+        const swept = await processOutbox();
+        outreach = {
+          matched: matched.ok ? matched.data : null,
+          fanout: fanned.ok ? fanned.data : null,
+          sweep: swept.ok ? swept.data : null,
+          fanoutError: fanned.ok ? null : fanned.code,
+          sweepError: swept.ok ? null : swept.code,
+        };
+      } else {
+        outreach = { matchedError: matched.code };
+      }
+    } catch (e) {
+      outreach = { outreachError: e instanceof Error ? e.message : "unknown" };
+    }
+  }
+
+  return NextResponse.json(
+    { ok: true, data: result.data, outreach, existing: (result as { existing?: boolean }).existing ?? false },
+    { status: (result as { existing?: boolean }).existing ? 200 : 201 }
+  );
 }
 
 export async function GET(req: NextRequest) {

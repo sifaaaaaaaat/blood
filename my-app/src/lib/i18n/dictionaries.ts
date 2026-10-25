@@ -596,7 +596,8 @@ const en = {
     },
     needAccount: "Sign in to submit a request — requests are tracked on your own account so only you manage them.",
     createdTitle: "Request submitted",
-    createdBody: "Your request is live. Go to your request to find and notify matching donors.",
+    createdBody:
+      "Your request is live — matching donors nearby were found and notified automatically.",
     viewRequest: "Open your request",
     listTitle: "Your blood requests",
     listSubtitle: "Track every request you created — matching, accepted donors and outcome.",
@@ -1378,7 +1379,7 @@ const bn: typeof en = {
     },
     needAccount: "অনুরোধ জমা দিতে সাইন ইন করুন — অনুরোধ আপনার নিজের অ্যাকাউন্টে সংরক্ষিত হয়, তাই শুধু আপনিই সেগুলো পরিচালনা করেন।",
     createdTitle: "অনুরোধ জমা হয়েছে",
-    createdBody: "আপনার অনুরোধ সক্রিয়। ম্যাচ হওয়া ডোনার খুঁজে জানাতে আপনার অনুরোধে যান।",
+    createdBody: "আপনার অনুরোধ সক্রিয় — কাছাকাছি ম্যাচ হওয়া ডোনার স্বয়ংক্রিয়ভাবে খোঁজা হয়েছে এবং জানানো হয়েছে।",
     viewRequest: "আপনার অনুরোধ খুলুন",
     listTitle: "আপনার রক্তের অনুরোধসমূহ",
     listSubtitle: "আপনার তৈরি প্রতিটি অনুরোধ দেখুন — ম্যাচিং, গ্রহণকারী ডোনার ও ফলাফল।",
