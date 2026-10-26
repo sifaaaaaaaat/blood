@@ -25,7 +25,9 @@ const crypto = require("node:crypto");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
 
-const PORT = Number(process.env.PORT || 3001);
+// Own env var only: the host shell may carry PORT=0, which would bind to a
+// random/invalid port and make the bridge unreachable.
+const PORT = Number(process.env.BRIDGE_PORT) || 3001;
 const TOKEN = process.env.WHATSAPP_BOT_TOKEN || "";
 
 if (!TOKEN) {
@@ -127,15 +129,23 @@ app.post("/send", authed, async (req, res) => {
     // Resolve the correct chat id first: modern WhatsApp accounts (LID) can
     // NOT be addressed as <phone>@c.us directly — that fails with
     // "No LID for user". getNumberId maps the number to the right JID and
-    // returns null if the number is not on WhatsApp.
-    const numberId = await client.getNumberId(phone);
-    // getNumberId can fail for LID-keyed accounts even when a chat exists;
-    // fall back to a direct legacy send before declaring the number absent.
-    const chatId = numberId ? (numberId._serialized ?? String(numberId)) : `${phone}@c.us`;
+    // returns null if the number is not on WhatsApp. Some LID-keyed accounts
+    // make getNumberId THROW even though the chat exists — so a thrown
+    // resolve must fall back to a direct legacy send instead of failing.
+    let chatId = null;
+    try {
+      const numberId = await client.getNumberId(phone);
+      chatId = numberId ? (numberId._serialized ?? String(numberId)) : null;
+    } catch (resolveErr) {
+      console.warn("getNumberId failed (falling back to legacy id):", resolveErr?.message);
+    }
+    if (!chatId) chatId = `${phone}@c.us`;
     const msg = await client.sendMessage(chatId, text.slice(0, 2000));
+    // If the legacy-direct send is rejected with a LID error, the number is
+    // genuinely unusable (not on WhatsApp / no mapping) — surface that clearly.
     const serialized = msg?.id?._serialized ?? msg?.id?.id ?? "";
     console.log("sent to", chatId, "→", serialized);
-    return res.json({ ok: true, id: serialized });
+    return res.json({ ok: true, id: serialized, chatId });
   } catch (e) {
     console.error("send failed:", e?.message, "\n", e?.stack);
     return res.status(502).json({ error: "send failed: " + (e?.message ?? "unknown") });
