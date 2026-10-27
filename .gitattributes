@@ -1,0 +1,11 @@
+# Files that run on a Linux host must keep LF endings. With core.autocrlf=true
+# on Windows a CRLF checkout makes bash fail with
+# "bad interpreter: /usr/bin/env bash^M" and systemd treat "\r" as part of the
+# command, so these are pinned explicitly.
+*.sh        text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+Caddyfile*  text eol=lf
+
+# The bridge process itself runs on the VM.
+whatsapp-bot/*.js  text eol=lf

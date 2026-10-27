@@ -156,7 +156,11 @@ log "installing bridge dependencies"
 cd "$APP_DIR/whatsapp-bot"
 # System Chrome is used instead of puppeteer's own download (saves ~200MB and
 # avoids a second browser on a small disk).
-PUPPETEER_SKIP_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund >/dev/null
+# npm ci is exact and fast, but it hard-fails if the lockfile drifted from
+# package.json; fall back to a resolving install rather than leaving a half-set
+# machine.
+PUPPETEER_SKIP_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund >/dev/null \
+  || PUPPETEER_SKIP_DOWNLOAD=1 npm install --omit=dev --no-audit --no-fund >/dev/null
 chown -R bridge:bridge "$APP_DIR"
 
 # ---------------------------------------------------------------------------
