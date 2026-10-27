@@ -78,8 +78,11 @@ export const whatsappWebProvider: NotificationProvider = {
       if (res.ok) {
         const ref = (await res.json().catch(() => ({}))) as { id?: string };
         // Real reference — namespaces with "ww-" so complete_outbox_item can
-        // treat it as a genuine (non-simulated) send.
-        const reference = `ww-${msg.messageType}-${ref.id ?? crypto.randomUUID()}`;
+        // treat it as a genuine (non-simulated) send. whatsapp-web.js leaves
+        // the id empty for some chats (e.g. LID self-chats), so fall back to a
+        // random id: a shared empty suffix would give every row the same
+        // reference and make deliveries impossible to trace.
+        const reference = `ww-${msg.messageType}-${ref.id || crypto.randomUUID()}`;
         return { accepted: true, reference, simulated: false };
       }
       const detail = await res.text().catch(() => "");

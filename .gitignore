@@ -35,6 +35,8 @@ Thumbs.db
 whatsapp-bot/.wwebjs_auth/
 whatsapp-bot/.wwebjs_cache/
 whatsapp-bot/inst*.txt
+# Local tunnel binary (cloudflared) — big download, not part of the code
+whatsapp-bot/.tools/
 
 # Framework metadata
 .vercel
