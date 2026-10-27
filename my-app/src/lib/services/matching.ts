@@ -121,6 +121,13 @@ export function candidatesQuery(opts: {
        and (dp.paused_until is null or dp.paused_until <= now())
        and dp.notify_consent = true
        and cn.verified_at is not null
+       -- Donation interval rule: a donor who gave blood within the last three
+       -- months is not asked again (self-reported dates included). This is a
+       -- rest-period rule, NOT a medical eligibility judgment.
+       and (
+         dp.last_donation_date is null
+         or dp.last_donation_date <= current_date - interval '3 months'
+       )
        -- Phase 8: donors under an (unlifted) administrative recovery hold are
        -- excluded from ordinary matching. Holds persist until the DONOR
        -- confirms availability after the configured period (expiry does not

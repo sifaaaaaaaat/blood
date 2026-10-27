@@ -29,6 +29,10 @@ const qrcode = require("qrcode");
 // random/invalid port and make the bridge unreachable.
 const PORT = Number(process.env.BRIDGE_PORT) || 3001;
 const TOKEN = process.env.WHATSAPP_BOT_TOKEN || "";
+// Where donor replies are interpreted (the RoktoSathi app). All conversation
+// logic lives there; this bridge only relays text in both directions.
+const APP_INBOUND_URL =
+  process.env.APP_INBOUND_URL || "http://localhost:3000/api/whatsapp/inbound";
 
 if (!TOKEN) {
   console.error("WHATSAPP_BOT_TOKEN is missing — refusing to start (writes would be unauthenticated).");
@@ -41,6 +45,41 @@ app.use(express.json({ limit: "64kb" }));
 let latestQr = null;
 let ready = false;
 let starting = true;
+
+/**
+ * chatId -> digits-only phone, remembered for every chat we send to.
+ *
+ * Modern WhatsApp accounts are LID-keyed: the same person appears as
+ * "<lid>@lid", whose digits are NOT their phone number. Remembering the chat
+ * we actually messaged lets an inbound reply be attributed to the right number
+ * even when WhatsApp reports the sender as a LID.
+ */
+const chatPhones = new Map();
+
+/** Best-effort real phone number for an inbound sender. */
+async function resolveSenderPhone(msg) {
+  const from = String(msg.from || "");
+
+  // 1. Authoritative: the library's LID <-> phone lookup.
+  try {
+    const [{ pn, lid } = {}] = (await client.getContactLidAndPhone(from)) || [];
+    const best = pn || lid;
+    if (best) {
+      const digits = String(best).split("@")[0].replace(/[^0-9]/g, "");
+      if (/^[0-9]{8,15}$/.test(digits)) return digits;
+    }
+  } catch (e) {
+    console.warn("LID/phone lookup failed:", e?.message);
+  }
+
+  // 2. Memory of chats we started (see /send).
+  const remembered = chatPhones.get(from);
+  if (remembered) return remembered;
+
+  // 3. Last resort: the raw digits of the sender id.
+  const raw = from.split("@")[0].replace(/[^0-9]/g, "");
+  return /^[0-9]{8,15}$/.test(raw) ? raw : "";
+}
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: ".wwebjs_auth" }),
@@ -56,6 +95,49 @@ client.on("qr", async (qr) => {
   console.log("\n=== Scan this QR with WhatsApp → Linked devices → Link a device ===\n");
   console.log(qrcode.toString(qr, { small: true }));
   console.log("\n(or open http://localhost:" + PORT + "/qr in a browser)\n");
+});
+
+/**
+ * Inbound donor replies.
+ *
+ * Messages from the paired account itself, groups, statuses and broadcasts are
+ * ignored. Everything else is relayed to the app, which answers with the
+ * replies to send back into the same chat — so the conversation rules (accept,
+ * the 3-month question, contact sharing) are enforced server-side and cannot
+ * be guessed by whoever holds the phone.
+ */
+client.on("message", async (msg) => {
+  try {
+    if (msg.fromMe || msg.isStatus) return;
+    if (msg.from === "status@broadcast" || String(msg.from || "").endsWith("@g.us")) return;
+    const chat = await msg.getChat().catch(() => null);
+    if (chat?.isGroup) return;
+
+    const phone = await resolveSenderPhone(msg);
+    const text = String(msg.body || "").trim();
+    if (!phone || !text) return;
+
+    console.log("inbound from", `+${phone}`, "(chat", String(msg.from || ""), ") →", text.slice(0, 40));
+                                     
+    const res = await fetch(APP_INBOUND_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-bot-token": TOKEN },
+      body: JSON.stringify({ phone, text }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("app rejected inbound reply:", res.status, payload?.message || "");
+      return;
+    }
+    for (const reply of payload?.data?.replies || []) {
+      if (typeof reply !== "string" || !reply) continue;
+      await client.sendMessage(msg.from, reply.slice(0, 2000));
+      console.log("replied to", `+${phone}`);
+    }
+  } catch (e) {
+    console.error("inbound handling failed:", e?.message);
+  }
 });
 
 client.on("authenticated", () => console.log("[ev] authenticated"));
@@ -140,6 +222,9 @@ app.post("/send", authed, async (req, res) => {
       console.warn("getNumberId failed (falling back to legacy id):", resolveErr?.message);
     }
     if (!chatId) chatId = `${phone}@c.us`;
+    // Remember which chat belongs to this number so an inbound reply from a
+    // LID-keyed sender can still be attributed to the right donor.
+    chatPhones.set(chatId, phone);
     const msg = await client.sendMessage(chatId, text.slice(0, 2000));
     // If the legacy-direct send is rejected with a LID error, the number is
     // genuinely unusable (not on WhatsApp / no mapping) — surface that clearly.
@@ -153,4 +238,7 @@ app.post("/send", authed, async (req, res) => {
 });
 
 client.initialize();
-app.listen(PORT, () => console.log(`WhatsApp bridge listening on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`WhatsApp bridge listening on http://localhost:${PORT}`);
+  console.log(`inbound replies are forwarded to ${APP_INBOUND_URL}`);
+});

@@ -228,7 +228,17 @@ export function RequestDetail({
                   {mStatus === "accepted" ? (
                     revealedFor && revealedFor !== "error" ? (
                       <span className="text-sm text-ink-800">
-                        {d.revealedLabel} <a href={`tel:${revealedFor.phone}`} className="font-semibold underline">{revealedFor.phone}</a>
+                        {d.revealedLabel}{" "}
+                        <a href={`tel:${revealedFor.phone}`} className="font-semibold underline">{revealedFor.phone}</a>
+                        {" · "}
+                        <a
+                          href={`https://wa.me/${revealedFor.phone.replace(/[^0-9]/g, "")}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-teal-700 underline hover:no-underline"
+                        >
+                          {d.whatsappCta}
+                        </a>
                       </span>
                     ) : (
                       <button

@@ -20,6 +20,8 @@ import "server-only";
 import crypto from "node:crypto";
 
 import type { NotificationProvider, OutboundMessage, SendOutcome } from "@/src/lib/providers/notification-provider";
+import { composeMatchAsk } from "@/src/lib/services/whatsapp-messages";
+import { fetchRequestMessageContext } from "@/src/lib/services/whatsapp-flow";
 
 const BOT_URL = (process.env.WHATSAPP_BOT_URL ?? "").replace(/\/+$/, "");
 const BOT_TOKEN = process.env.WHATSAPP_BOT_TOKEN ?? "";
@@ -58,13 +60,10 @@ export const whatsappWebProvider: NotificationProvider = {
     if (!BOT_URL || !BOT_TOKEN) {
       return { accepted: false, reason: "WHATSAPP_BOT_URL/TOKEN not configured", simulated: false };
     }
-    // Content is composed at the bridge layer's caller (message templates never
-    // live in the outbox). The bridge accepts free text; we pass a standard
-    // match notification template keyed by messageType.
-    const text = renderMessage(msg.messageType, {
-      requestId: msg.requestId,
-      recipientId: msg.recipientId,
-    });
+    // Content is composed here, at send time (message templates never live in
+    // the outbox and no content is persisted). The match ask carries the real
+    // request facts, so it is rendered from the request row.
+    const text = await renderMessage(msg.messageType, { requestId: msg.requestId });
     if (!text) {
       return { accepted: false, reason: `no template for message type '${msg.messageType}'`, simulated: false };
     }
@@ -91,12 +90,24 @@ export const whatsappWebProvider: NotificationProvider = {
   },
 };
 
-/** Message body per message_type. Content rules: no fabricated delivery, no donor-PII in links. */
-function renderMessage(messageType: string, ctx: { requestId: string | null; recipientId: string }): string | null {
-  const base = messageType.startsWith("match_action")
-    ? "🔴 Blood is urgently needed near you. Please open the RoktoSathi app to view and respond."
-    : null;
-  return base;
+/**
+ * Message body per message_type. Content rules: no fabricated delivery, no
+ * donor-PII in the body, and no medical eligibility claims.
+ *
+ * The match ask is the donor-facing card (blood group, units, place, urgency)
+ * followed by the numbered reply options the conversation flow understands.
+ */
+async function renderMessage(messageType: string, ctx: { requestId: string | null }): Promise<string | null> {
+  if (!messageType.startsWith("match_action")) return null;
+  if (!ctx.requestId) return null;
+
+  const request = await fetchRequestMessageContext(ctx.requestId);
+  if (!request) return null;
+  // Never re-ask for a request that is no longer open; the outbox sweep skips
+  // these too, so this is a second, cheap guard.
+  if (!["submitted", "searching", "awaiting_responses"].includes(request.status)) return null;
+
+  return composeMatchAsk(request);
 }
 
 /** Preferred export: single getProvider covers both mock and whatsappWeb. */
