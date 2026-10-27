@@ -1,0 +1,30 @@
+[Unit]
+Description=RoktoSathi WhatsApp bridge (whatsapp-web.js)
+Documentation=https://github.com/sifaaaaaaaat/blood/tree/main/whatsapp-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bridge
+Group=bridge
+WorkingDirectory=/opt/roktosathi-bridge/whatsapp-bot
+EnvironmentFile=/etc/roktosathi-bridge/env
+ExecStart=/usr/bin/env node bot.js
+
+# Always come back: donor alerts must not silently stop.
+Restart=always
+RestartSec=10
+# A session that hangs without exiting would otherwise sit dead forever.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/roktosathi-bridge
+
+# Chrome logs a lot; keep journald from being flooded.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

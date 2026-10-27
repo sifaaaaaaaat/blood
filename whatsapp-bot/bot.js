@@ -14,25 +14,51 @@
  * Run:   npm install && npm start    (first run prints a QR you scan from
  *   the phone that owns the session; the session then persists in .wwebjs_auth)
  *
+ * Hosting: this process is meant to run 24/7 on a small always-on machine (a
+ * free-tier VM), NOT on a laptop, because every donor alert passes through it.
+ * See deploy/README.md. For a hosted setup set WWEBJS_DATA_PATH to a directory
+ * that survives restarts (that folder IS the linked-device session) and
+ * CHROME_PATH to the system Chrome if the bundled one is missing.
+ *
  * Endpoints (all require header  x-bot-token: <same token as the app>):
  *   GET  /status  → { ready, paired, info }
- *   GET  /qr      → HTML page rendering the pairing QR (no auth: pairing time)
+ *   GET  /qr      → pairing page (token required when exposed publicly)
  *   POST /send    → { phone: "8801XXXXXXXXX", text: "..." }
+ *   GET  /health  → { ok, ready } — unauthenticated liveness probe
  */
 require("dotenv").config();
+const fs = require("node:fs");
+const path = require("node:path");
 const express = require("express");
 const crypto = require("node:crypto");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
 
-// Own env var only: the host shell may carry PORT=0, which would bind to a
-// random/invalid port and make the bridge unreachable.
-const PORT = Number(process.env.BRIDGE_PORT) || 3001;
+// Own env vars only: the host shell may carry PORT=0, which would bind to a
+// random/invalid port and make the bridge unreachable. BRIDGE_PORT wins; PORT
+// is honoured as a fallback so PaaS hosts that inject a port still work.
+const PORT = Number(process.env.BRIDGE_PORT || process.env.PORT) || 3001;
 const TOKEN = process.env.WHATSAPP_BOT_TOKEN || "";
 // Where donor replies are interpreted (the RoktoSathi app). All conversation
 // logic lives there; this bridge only relays text in both directions.
 const APP_INBOUND_URL =
   process.env.APP_INBOUND_URL || "http://localhost:3000/api/whatsapp/inbound";
+// Directory holding the linked-device session. On a server this must be a path
+// outside the app checkout (e.g. /var/lib/roktosathi-bridge) so redeploys and
+// `git pull` never wipe the pairing.
+const DATA_PATH = process.env.WWEBJS_DATA_PATH || ".wwebjs_auth";
+// Chrome/Chromium binary. Unset = use the one puppeteer downloaded at install.
+const CHROME_PATH = process.env.CHROME_PATH || "";
+// Public deployment: the pairing page can link *any* phone to this session, so
+// it is token-gated whenever the bridge is not bound to loopback.
+const QR_PUBLIC = String(process.env.QR_PUBLIC ?? "false").toLowerCase() === "true";
+
+try {
+  fs.mkdirSync(DATA_PATH, { recursive: true });
+} catch (e) {
+  console.error(`cannot create session dir ${DATA_PATH}:`, e?.message);
+  process.exit(1);
+}
 
 if (!TOKEN) {
   console.error("WHATSAPP_BOT_TOKEN is missing — refusing to start (writes would be unauthenticated).");
@@ -91,11 +117,18 @@ async function resolveSenderPhone(msg) {
 }
 
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: ".wwebjs_auth" }),
-  // Puppeteer may have to download its own Chromium; keep defaults for reliability.
+  authStrategy: new LocalAuth({ dataPath: DATA_PATH }),
   puppeteer: {
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    // Only override when CHROME_PATH is set; otherwise puppeteer's own build.
+    ...(CHROME_PATH ? { executablePath: CHROME_PATH } : {}),
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      // Required on small servers/containers where /dev/shm is tiny.
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   },
 });
 
@@ -104,7 +137,13 @@ client.on("qr", async (qr) => {
   latestQr = qr;
   console.log("\n=== Scan this QR with WhatsApp → Linked devices → Link a device ===\n");
   console.log(qrcode.toString(qr, { small: true }));
-  console.log("\n(or open http://localhost:" + PORT + "/qr in a browser)\n");
+  console.log(
+    "\n(or open " +
+      (QR_PUBLIC
+        ? `http://localhost:${PORT}/qr`
+        : `http://localhost:${PORT}/qr?token=<WHATSAPP_BOT_TOKEN>`) +
+      " in a browser)\n"
+  );
 });
 
 /**
@@ -189,17 +228,43 @@ function isPhone(p) {
   return typeof p === "string" && /^[0-9]{8,15}$/.test(p); // digits only, international format without +
 }
 
-// Local-only pairing page: renders the live QR as an image.
-app.get("/qr", async (_req, res) => {
+/**
+ * Pairing page. On a public host anyone who loads it could scan it with their
+ * own phone and take over the session slot, so it requires the bridge token in
+ * the query string (it is also accepted as the header). Set QR_PUBLIC=true
+ * only for a quick local pairing.
+ */
+app.get("/qr", async (req, res) => {
+  if (!QR_PUBLIC) {
+    const supplied = String(req.query.token || req.get("x-bot-token") || "");
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(TOKEN);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).send("<h1>Unauthorized</h1><p>Open this page with ?token=YOUR_WHATSAPP_BOT_TOKEN</p>");
+    }
+  }
+  // Auto-refresh: WhatsApp QRs expire in ~20s, and a stale image is the most
+  // common reason a remote pairing attempt fails.
+  res.set("cache-control", "no-store");
   if (!latestQr) {
-    return res.status(404).send(ready ? "<h1>Already paired ✅</h1>" : "<h1>No QR yet — still starting, refresh in a few seconds…</h1>");
+    return res.status(200).send(
+      `<html><head><meta http-equiv="refresh" content="3"></head><body style="font-family:sans-serif;text-align:center;padding-top:40px">
+        <h1>${ready ? "Already paired ✅" : "No QR yet — starting…"}</h1>
+        <p>This page refreshes itself.</p></body></html>`
+    );
   }
   const dataUrl = await qrcode.toDataURL(latestQr);
-  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding-top:40px">
-    <h2>RoktoSathi WhatsApp bot — pair your number</h2>
+  res.send(`<html><head><meta http-equiv="refresh" content="20"></head><body style="font-family:sans-serif;text-align:center;padding-top:40px">
+    <h2>RoktoSathi WhatsApp bridge — pair your number</h2>
     <p>WhatsApp app → Settings → Linked devices → Link a device</p>
     <img src="${dataUrl}" width="320" height="320"/>
-    <p>Refresh this page if it expires.</p></body></html>`);
+    <p>Codes expire in ~20s; this page reloads with a fresh one.</p></body></html>`);
+});
+
+// Unauthenticated liveness probe for uptime monitors / the host's healthcheck.
+// Deliberately reveals nothing but "up" and whether the session is usable.
+app.get("/health", (_req, res) => {
+  res.status(200).json({ ok: true, ready });
 });
 
 function authed(req, res, next) {
@@ -282,7 +347,34 @@ setInterval(async () => {
 }, 30_000);
 
 client.initialize();
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`WhatsApp bridge listening on http://localhost:${PORT}`);
+  console.log(`session dir: ${path.resolve(DATA_PATH)}`);
+  console.log(`chrome: ${CHROME_PATH || "puppeteer bundled build"}`);
   console.log(`inbound replies are forwarded to ${APP_INBOUND_URL}`);
+  console.log(`pairing page auth: ${QR_PUBLIC ? "PUBLIC (QR_PUBLIC=true)" : "token required"}`);
 });
+
+/**
+ * Graceful shutdown. The auth state is flushed to disk on destroy(); exiting
+ * hard (reboot, `systemctl restart`, host redeploy) without it can leave a
+ * half-written session that needs a fresh QR scan.
+ */
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received — closing the WhatsApp session cleanly…`);
+  const forceExit = setTimeout(() => process.exit(0), 15_000);
+  try {
+    await client.destroy();
+  } catch (e) {
+    console.warn("client.destroy during shutdown failed:", e?.message);
+  }
+  server.close();
+  clearTimeout(forceExit);
+  console.log("shutdown complete");
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

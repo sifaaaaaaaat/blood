@@ -1,0 +1,26 @@
+# RoktoSathi WhatsApp bridge — HTTPS in front of the local bridge.
+#
+# setup-vm.sh replaces the two placeholders below:
+#   __BRIDGE_HOSTNAME__  e.g. bridge.203.0.113.9.sslip.io (no domain needed:
+#                        sslip.io resolves that name straight to the IP)
+#   __BRIDGE_PORT__      3001
+#
+# Certificates are obtained automatically from Let's Encrypt, which requires
+# ports 80 and 443 to be reachable from the internet.
+__BRIDGE_HOSTNAME__ {
+	encode zstd gzip
+
+	# Only the bridge itself is exposed; the app talks to /send and /status
+	# with the shared token header, so no extra auth layer is needed here.
+	reverse_proxy 127.0.0.1:__BRIDGE_PORT__ {
+		# Pairing can take a moment while Chrome boots.
+		transport http {
+			read_timeout 60s
+		}
+	}
+
+	log {
+		output file /var/log/caddy/bridge.log
+		format console
+	}
+}
