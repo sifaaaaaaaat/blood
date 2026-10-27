@@ -45,6 +45,15 @@ app.use(express.json({ limit: "64kb" }));
 let latestQr = null;
 let ready = false;
 let starting = true;
+// Watchdog state: WhatsApp Web sometimes authenticates and then never emits
+// "ready", leaving a session that looks alive but can send nothing.
+let lastEventAt = Date.now();
+let autoRestarts = 0;
+const touch = () => {
+  lastEventAt = Date.now();
+};
+const STALL_MS = 120_000;
+const MAX_AUTO_RESTARTS = 5;
 
 /**
  * chatId -> digits-only phone, remembered for every chat we send to.
@@ -91,6 +100,7 @@ const client = new Client({
 });
 
 client.on("qr", async (qr) => {
+  touch();
   latestQr = qr;
   console.log("\n=== Scan this QR with WhatsApp → Linked devices → Link a device ===\n");
   console.log(qrcode.toString(qr, { small: true }));
@@ -140,14 +150,22 @@ client.on("message", async (msg) => {
   }
 });
 
-client.on("authenticated", () => console.log("[ev] authenticated"));
-client.on("loading_screen", (pct, msg) => console.log(`[ev] loading_screen ${pct}% ${msg ?? ""}`));
+client.on("authenticated", () => {
+  touch();
+  console.log("[ev] authenticated");
+});
+client.on("loading_screen", (pct, msg) => {
+  touch();
+  console.log(`[ev] loading_screen ${pct}% ${msg ?? ""}`);
+});
 client.on("loading_screen_failure", (err) => console.error("[ev] loading_screen FAILURE:", err));
 client.on("remote_session_saved", () => console.log("[ev] remote_session_saved"));
 
 client.on("ready", () => {
+  touch();
   ready = true;
   starting = false;
+  autoRestarts = 0;
   latestQr = null;
   // whatsapp-web.js exposes the paired account via client.info (no getMe()).
   const me = client.info;
@@ -236,6 +254,32 @@ app.post("/send", authed, async (req, res) => {
     return res.status(502).json({ error: "send failed: " + (e?.message ?? "unknown") });
   }
 });
+
+/**
+ * Watchdog: a session that authenticates but never becomes ready (a real
+ * WhatsApp Web failure seen in practice) is restarted automatically, so donor
+ * alerts keep flowing without someone noticing a silent bridge.
+ */
+setInterval(async () => {
+  if (ready) return;
+  if (Date.now() - lastEventAt < STALL_MS) return;
+  if (autoRestarts >= MAX_AUTO_RESTARTS) {
+    console.error(
+      `session still not ready after ${MAX_AUTO_RESTARTS} automatic restarts — open http://localhost:${PORT}/qr and link the phone again`
+    );
+    lastEventAt = Date.now(); // report once, not every tick
+    return;
+  }
+  autoRestarts++;
+  lastEventAt = Date.now();
+  console.warn(`session stalled after authentication — restarting the client (attempt ${autoRestarts})`);
+  try {
+    await client.destroy();
+  } catch (e) {
+    console.warn("destroy during watchdog restart failed:", e?.message);
+  }
+  client.initialize();
+}, 30_000);
 
 client.initialize();
 app.listen(PORT, () => {
