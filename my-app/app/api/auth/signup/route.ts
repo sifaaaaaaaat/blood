@@ -10,6 +10,10 @@ import { createAuthedClient } from "@/src/lib/db";
  *
  * On failure, returns useful messages for weak passwords, duplicate emails,
  * etc. Does NOT send a magic-link sign-in email.
+ *
+ * When the Supabase project requires email confirmation, signUp() creates the
+ * user but returns no session. `needsConfirmation` tells the client to ask for
+ * the inbox confirmation step instead of expecting an authenticated session.
  */
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as {
@@ -83,5 +87,9 @@ export async function POST(req: NextRequest) {
 
   // Successful sign-up — data.user contains the new auth user
   // The public.handle_new_user trigger should have created the profile row
-  return NextResponse.json({ ok: true, data: { user: data.user } });
+  return NextResponse.json({
+    ok: true,
+    data: { user: data.user },
+    needsConfirmation: !data.session,
+  });
 }

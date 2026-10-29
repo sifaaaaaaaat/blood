@@ -29,12 +29,14 @@ export function SignUpForm({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const router = useRouter();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setSending(true);
     setError(null);
+    setNotice(null);
 
     // Validate password match
     if (password !== confirmPassword) {
@@ -68,8 +70,22 @@ export function SignUpForm({
         ok: boolean;
         message?: string;
         code?: string;
+        needsConfirmation?: boolean;
       };
       if (res.ok && json.ok) {
+        // When the project requires email confirmation, Supabase creates the
+        // user but issues no session, so sending the visitor to /profile only
+        // bounces them to the login page with no explanation. Tell them to
+        // confirm instead.
+        if (json.needsConfirmation) {
+          setNotice(
+            "Account created. Check your inbox for the confirmation link, then sign in."
+          );
+          setPassword("");
+          setConfirmPassword("");
+          setSending(false);
+          return;
+        }
         router.push("/profile");
       } else {
         const errMsg =
@@ -90,6 +106,11 @@ export function SignUpForm({
       {error ? (
         <Alert tone="error" title="Registration problem">
           <span>{error}</span>
+        </Alert>
+      ) : null}
+      {notice ? (
+        <Alert tone="success" title="Confirm your email">
+          <span>{notice}</span>
         </Alert>
       ) : null}
       <div className="grid gap-1.5">
