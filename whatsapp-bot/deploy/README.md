@@ -4,24 +4,47 @@ The bridge is a long-running Node process that drives a real Chrome browser
 (`whatsapp-web.js`). Vercel cannot host it: serverless functions have no
 persistent disk and no 24/7 process. It needs a small always-on machine.
 
-There is **no free tier that runs headless Chromium with a persistent disk**
-(checked: no catalog service offers it — PaaS free tiers sleep on idle and wipe
-the disk, which loses the WhatsApp session). The free option that does work is
-an **always-free VM**:
+Pick a host first. The gate is **disk**: the linked-device session must survive
+restarts, so anything that wipes its filesystem or sleeps on idle will make you
+re-scan the QR code. The second gate is **RAM**: headless Chromium wants ~1 GB.
 
-| Host | Free offer | Notes |
-|---|---|---|
-| **Oracle Cloud — Always Free VM** | 1–4 ARM cores / 24 GB RAM, or 1 GB x86, 200 GB disk, **never sleeps** | Best fit. Needs a card for identity verification (not charged). |
-| **Google Cloud — e2-micro** | 1 free VM in `us-west1` / `us-central1` / `us-east1`, 30 GB disk | 1 GB RAM — the script adds swap. |
-| **Hetzner / DigitalOcean** | ~$4/month | No signup friction; simplest if you'd rather pay than configure. |
+| Host | Card needed? | Free offer | Verdict |
+|---|---|---|---|
+| **Azure for Students** | **No** | 750 h/month of a B1s VM + $100 credit, 12 months, renewable while enrolled | **Best no-card option** if you can verify student status. Follow the VM steps below. |
+| **Oracle Cloud — Always Free VM** | Yes (identity check, not charged) | 1–4 ARM cores / 24 GB RAM, or 1 GB x86, 200 GB disk, never sleeps | Best overall if a card exists. |
+| **An old Android phone** | **No** | Termux + Cloudflare Quick Tunnel | Free forever, no card, no signup. Needs a spare phone — see [Option A](#option-a--an-old-android-phone). |
+| **Caasify** | **No** | Containers free through 31 Dec 2026, persistent volumes | Real Linux, no phone needed — see [Option B](#option-b--a-free-container-host). Offer is time-limited. |
+| **Google Cloud e2-micro** | Yes | 1 free VM in `us-west1` / `us-central1` / `us-east1` | 1 GB RAM — `setup-vm.sh` adds swap. |
+| **Render / Koyeb / Railway / Heroku free tiers** | No (Render) / Yes (Koyeb) | 512 MB RAM | **Not usable here**: they sleep after 15 min of idle, and Render free has no disk, so the session is lost on every wake. |
+| **Hetzner / DigitalOcean** | Yes | ~$4–6/month | No signup friction; simplest if you'd rather pay than configure. |
 
-Everything below is automated by [`setup-vm.sh`](setup-vm.sh).
+The steps below are automated by [`setup-vm.sh`](setup-vm.sh) and work on any
+Debian/Ubuntu VM (Oracle, Azure for Students, Hetzner…). For the two no-card,
+no-VM routes see [Option A](#option-a--an-old-android-phone) and
+[Option B](#option-b--a-free-container-host) at the end.
 
 ---
 
 ## 1. Create the VM
 
-### Oracle Cloud (recommended)
+### Azure for Students (no credit card)
+1. <https://azure.microsoft.com/en-us/free/students> → sign in with your
+   **university email**. Requires 18+ and full-time enrolment; no card at all.
+2. Portal → **Create a resource → Virtual machine**.
+3. Region: **Southeast Asia** or **Central India** (closest to Bangladesh).
+4. Image: **Ubuntu 22.04 LTS**. Size: **B1s** — 1 vCPU / 1 GB, which is the
+   free 750 h/month allowance. 1 GB is tight for Chromium, so `setup-vm.sh`
+   adds a swap file.
+5. Authentication: **SSH public key** → *Generate new key pair*, and download
+   the private key.
+6. Inbound ports: allow **22**, **80** and **443**.
+7. Create, note the **public IP**; the Linux user is `azureuser`.
+
+> 750 hours is the whole month (744 h), so this covers one always-on VM. Leave
+> the VM running; if the $100 credit runs out, the subscription pauses until
+> you contact support.
+
+### Oracle Cloud (needs a card)
 1. <https://cloud.oracle.com> → sign up (card for verification only).
 2. **Compute → Instances → Create instance**.
 3. Image: **Ubuntu 22.04** (or 24.04).
@@ -62,7 +85,7 @@ Copy the `whatsapp-bot` folder to the VM, or clone the public repo there.
 Then:
 
 ```bash
-ssh ubuntu@<VM_IP>            # Oracle Ubuntu user is `ubuntu`; GCP user is your name
+ssh ubuntu@<VM_IP>            # Oracle: `ubuntu` · Azure: `azureuser` · GCP: your name
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/sifaaaaaaaat/blood.git
 cd blood/whatsapp-bot
@@ -142,6 +165,90 @@ in `mock` mode and records simulated sends instead of contacting WhatsApp.
    paired number.
 4. Reply `1` (accept) as the donor; the app answers in the same chat, and the
    requester sees the donor's number once the 3-month rule passes.
+
+---
+
+## Option A — an old Android phone
+
+Runs the **same `bot.js`**, no rewrite. Free forever, no card, no signup. Needs
+an Android phone (ideally a spare one) that stays on WiFi and plugged in.
+
+**What you need:** the phone, a charger, and Termux installed from
+**F-Droid** (<https://f-droid.org/en/packages/com.termux/>) — *not* the Play
+Store build, which is a different, broken branch with a different signing key.
+
+```bash
+# in Termux
+pkg update && pkg install -y git
+termux-setup-storage          # grant the Android permission prompt
+git clone https://github.com/sifaaaaaaaat/blood.git
+cd blood/whatsapp-bot
+bash deploy/termux-setup.sh --token '<YOUR_WHATSAPP_BOT_TOKEN>'
+```
+
+[`termux-setup.sh`](termux-setup.sh) installs Node and Chromium, takes a wake
+lock, writes `.env`, registers a Termux:Boot script, starts a Cloudflare Quick
+Tunnel and then runs the bridge in a restart loop. It prints:
+
+```
+Public URL: https://<random-words>.trycloudflare.com
+Pair here:  http://localhost:3001/qr?token=<YOUR_TOKEN>
+```
+
+Pair by opening the **localhost** URL in Chrome *on the phone* (the token stays
+out of the tunnel that way), then set `WHATSAPP_BOT_URL` in Vercel to the
+`trycloudflare.com` URL and redeploy.
+
+### Things that will bite you
+
+- **The Quick Tunnel URL is random and changes on every restart.** You must
+  update `WHATSAPP_BOT_URL` in Vercel and redeploy each time. A named tunnel
+  needs a domain you own — the GitHub Student Pack includes a free Namecheap
+  `.me` domain, which fixes this permanently and gives the site a nicer URL too.
+- **Android kills background apps.** Set Settings → Apps → Termux → Battery to
+  **Unrestricted**, keep the wake-lock notification visible, and install
+  **Termux:Boot** so it restarts after a reboot.
+- **Chromium on Termux is the flaky part.** If pairing fails with `Aw, Snap!` or
+a launch error, run Node *and* Chrome inside `proot-distro` Ubuntu instead
+  (`pkg install proot-distro`, `proot-distro install ubuntu`, then install
+  Google Chrome's arm64 `.deb` there and point `CHROME_PATH` at
+  `/usr/bin/google-chrome-stable`).
+- Do not use the phone whose WhatsApp you are pairing for anything critical.
+
+---
+
+## Option B — a free container host
+
+The repo now ships a [`Dockerfile`](../Dockerfile) that bundles system Chromium,
+so any Docker host works:
+
+```bash
+docker build -t roktosathi-bridge whatsapp-bot
+
+docker run -d --name bridge -p 3001:3001 \
+  -e WHATSAPP_BOT_TOKEN='<YOUR_WHATSAPP_BOT_TOKEN>' \
+  -e APP_INBOUND_URL='https://blood-gamma-nine.vercel.app/api/whatsapp/inbound' \
+  -v roktosathi-session:/data \
+  roktosathi-bridge
+```
+
+On a hosted platform, configure:
+
+| Setting | Value |
+|---|---|
+| Environment | `WHATSAPP_BOT_TOKEN`, `APP_INBOUND_URL` |
+| Volume / persistent disk | mount at **`/data`** — this *is* the session |
+| Port | `3001` (most hosts inject `PORT`; the bridge honours that too) |
+| Scale-to-zero | **off**, minimum replicas **1** — a sleeping bridge delays every donor alert |
+| Health check path | `/health` |
+
+Free-container caveats: **Caasify**'s offer runs only through 31 Dec 2026, and
+**Render's** free plan is 512 MB with no disk, which is too small for Chromium
+and loses the session — don't use it for this.
+
+If the host needs a repo rather than a local build, point it at
+`https://github.com/sifaaaaaaaat/blood` with `whatsapp-bot` as the build context
+and it will pick up the same `Dockerfile`.
 
 ---
 

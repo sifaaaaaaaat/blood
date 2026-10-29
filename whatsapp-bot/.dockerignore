@@ -1,0 +1,9 @@
+# Keep the build context small and never ship local secrets or sessions.
+node_modules
+.wwebjs_auth
+.wwebjs_cache
+.tools
+.env
+*.log
+deploy
+README.md
